@@ -1,0 +1,22 @@
+{$N8N_HOST} {
+	encode gzip
+
+	# Public webhooks (Twilio, SendGrid, resume-ai links)
+	@webhooks path /webhook/lre/*
+	handle @webhooks {
+		reverse_proxy n8n:5678
+	}
+
+	# Everything else = n8n editor. Optional: restrict to office/VPN IPs.
+	# @blocked not remote_ip 203.0.113.10/32
+	# respond @blocked 403
+	handle {
+		reverse_proxy n8n:5678
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+}

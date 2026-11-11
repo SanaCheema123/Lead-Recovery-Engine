@@ -1,0 +1,90 @@
+# Demo client used for sales demos and end-to-end testing.
+slug: demo-investor
+name: "Lone Star Home Buyers (DEMO)"
+timezone: America/Chicago
+active: true
+
+crm:
+  type: ghl
+  location_id: "REPLACE_WITH_DEMO_LOCATION_ID"
+  import:
+    stale_days: 45
+    include_tags: []
+    exclude_tags: [lre-exclude, dnc, under-contract, closed]
+    page_size: 100
+  field_map:
+    first_name: firstName
+    last_name: lastName
+    phone: phone
+    email: email
+    property_address: address1
+    property_city: city
+    property_state: state
+    property_zip: postalCode
+  writeback_fields:
+    lre_status: "REPLACE_CF_ID_STATUS"
+    lre_score: "REPLACE_CF_ID_SCORE"
+    lre_temperature: "REPLACE_CF_ID_TEMPERATURE"
+    lre_timeline: "REPLACE_CF_ID_TIMELINE"
+    lre_motivation: "REPLACE_CF_ID_MOTIVATION"
+    lre_condition: "REPLACE_CF_ID_CONDITION"
+    lre_summary: "REPLACE_CF_ID_SUMMARY"
+  tags:
+    engaged: lre-engaged
+    qualified: lre-qualified
+    hot: lre-hot
+    booked: lre-appointment
+    nurture: lre-nurture
+    dnc: lre-dnc
+    wrong_number: lre-wrong-number
+    handoff: lre-needs-human
+  pipeline:
+    id: "REPLACE_PIPELINE_ID"
+    stages:
+      qualified: "REPLACE_STAGE_ID_QUALIFIED"
+      appointment_booked: "REPLACE_STAGE_ID_BOOKED"
+  assign_tasks_to: ""
+
+calendar:
+  enabled: true
+  provider: ghl
+  calendar_id: "REPLACE_CALENDAR_ID"
+  appointment_type: "quick 10-minute call with Mike"
+  duration_minutes: 15
+  slots_to_offer: 4
+  min_notice_hours: 2
+  booking_window_days: 5
+
+persona:
+  agent_name: Sarah
+  company_name: "Lone Star Home Buyers"
+  buyer_description: "a local, family-run company that buys houses as-is, no repairs or agent fees"
+  market_area: "Dallas–Fort Worth"
+  rep_name: Mike
+
+messaging:
+  sms_from_numbers: ["+15555550100"]
+  quiet_hours: { start_hour: 9, end_hour: 20, allow_sunday: false, holidays: ["2026-11-26", "2026-12-25", "2027-01-01"] }
+  daily_send_cap: 150
+  max_ai_turns_per_lead_per_day: 15
+  reply_debounce_seconds: 20
+  nudge_after_hours: 24
+  max_nudges: 2
+  reply_outside_window: false
+
+email:
+  enabled: true
+  from_name: "Sarah at Lone Star Home Buyers"
+  from_address: "sarah@demo.example.com"
+  reply_domain: "reply.demo.example.com"
+  physical_address: "100 Demo Plaza, Dallas, TX 75201"
+
+qualification:
+  hot_threshold: 70
+  warm_threshold: 40
+  require_decision_maker: true
+
+handoff:
+  slack_webhook_env: SLACK_WEBHOOK_URL_HANDOFF
+  notify_emails: ["demo-acquisitions@example.com"]
+  notify_on_hot_lead: true

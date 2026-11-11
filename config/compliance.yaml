@@ -1,0 +1,35 @@
+# =============================================================================
+# Compliance defaults — REVIEW WITH COUNSEL BEFORE GOING LIVE.
+# These are conservative engineering defaults, not legal advice.
+# Code defaults live in n8n/code/lib/compliance.js (DEFAULT_STATE_RULES);
+# values here are synced into clients.settings.state_rules by sync-config.
+# =============================================================================
+
+global_quiet_hours:
+  start_hour: 9
+  end_hour: 20
+
+# Stricter state rules for unsolicited/marketing texts (effective window = intersection
+# of global + state). max_per_24h limits campaign messages on the same subject.
+state_rules:
+  FL: { start_hour: 8, end_hour: 20, max_per_24h: 3 }
+  OK: { start_hour: 8, end_hour: 20, max_per_24h: 3 }
+  MD: { start_hour: 8, end_hour: 20, max_per_24h: 3 }
+  WA: { start_hour: 8, end_hour: 20 }
+
+opt_out:
+  keywords: [STOP, STOPALL, UNSUBSCRIBE, CANCEL, END, QUIT, REVOKE, OPTOUT, "OPT OUT", REMOVE]
+  natural_language_detection: true
+  send_confirmation_for_natural_language: true
+  confirmation_text: "You've been removed and won't receive further messages from us."
+  suppression_scope: client      # client | global
+
+first_message:
+  append_opt_out_notice: true
+  opt_out_notice: "Reply STOP to opt out."
+
+ai_disclosure:
+  disclose_when_asked: true      # agent must never claim to be human
+
+record_keeping:
+  keep_messages_days: 1825       # 5 years (TCPA statute of limitations is 4 years)

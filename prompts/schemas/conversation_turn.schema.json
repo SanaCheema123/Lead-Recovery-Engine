@@ -1,0 +1,54 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reply", "intent", "sentiment", "next_action", "selected_slot_iso", "followup_date", "handoff_reason", "confidence", "extracted"],
+  "properties": {
+    "reply": { "type": "string", "description": "Exact message to send to the lead." },
+    "intent": {
+      "type": "string",
+      "enum": ["interested", "maybe", "not_interested", "question", "price_inquiry", "scheduling", "wrong_number", "opt_out", "who_is_this", "already_sold", "listed_with_agent", "other"]
+    },
+    "sentiment": { "type": "string", "enum": ["positive", "neutral", "negative", "angry"] },
+    "next_action": {
+      "type": "string",
+      "enum": ["continue_conversation", "offer_appointment", "confirm_appointment", "schedule_followup", "handoff_to_human", "mark_not_interested", "mark_wrong_number", "opt_out", "end_conversation"]
+    },
+    "selected_slot_iso": { "type": ["string", "null"], "description": "Exact start_iso of the accepted slot, only for confirm_appointment." },
+    "followup_date": { "type": ["string", "null"], "description": "YYYY-MM-DD, only for schedule_followup." },
+    "handoff_reason": { "type": ["string", "null"] },
+    "confidence": { "type": "number" },
+    "extracted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "is_owner", "interested_in_selling", "timeline", "motivation_level", "motivation_reasons",
+        "property_condition", "occupancy", "price_flexibility", "asking_price", "is_decision_maker",
+        "property_type", "bedrooms", "bathrooms", "best_contact_time", "notes", "conversation_summary"
+      ],
+      "properties": {
+        "is_owner": { "type": ["boolean", "null"] },
+        "interested_in_selling": { "type": ["string", "null"], "enum": ["yes", "maybe", "no", null] },
+        "timeline": { "type": ["string", "null"], "enum": ["asap", "0_3_months", "3_6_months", "6_12_months", "12_plus_months", null] },
+        "motivation_level": { "type": ["string", "null"], "enum": ["high", "medium", "low", null] },
+        "motivation_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["foreclosure", "behind_on_payments", "probate", "inherited", "divorce", "relocation", "tired_landlord", "financial_hardship", "health", "downsizing", "upsizing", "code_violations", "tax_liens", "vacant_property", "needs_repairs", "retirement", "other"]
+          }
+        },
+        "property_condition": { "type": ["string", "null"], "enum": ["excellent", "good", "needs_some_repairs", "needs_major_repairs", null] },
+        "occupancy": { "type": ["string", "null"], "enum": ["owner_occupied", "tenant_occupied", "vacant", null] },
+        "price_flexibility": { "type": ["string", "null"], "enum": ["flexible", "open_to_offer", "firm_reasonable", "firm_above_market", null] },
+        "asking_price": { "type": ["number", "null"] },
+        "is_decision_maker": { "type": ["boolean", "null"] },
+        "property_type": { "type": ["string", "null"], "enum": ["single_family", "multi_family", "condo", "townhouse", "mobile_home", "land", "commercial", "other", null] },
+        "bedrooms": { "type": ["number", "null"] },
+        "bathrooms": { "type": ["number", "null"] },
+        "best_contact_time": { "type": ["string", "null"] },
+        "notes": { "type": ["string", "null"] },
+        "conversation_summary": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

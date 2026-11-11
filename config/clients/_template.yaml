@@ -1,0 +1,109 @@
+# =============================================================================
+# Client configuration template — copy to config/clients/<slug>.yaml
+# Load into the database with:  npm run sync:config
+# Everything a new real-estate client needs is configured here; no workflow
+# edits required to onboard a client.
+# =============================================================================
+
+slug: my-client                 # unique, url-safe
+name: "Client Company LLC"
+timezone: America/Chicago       # fallback when the lead's state is unknown
+active: true
+
+# ---------------------------------------------------------------- CRM
+crm:
+  type: ghl                     # ghl | hubspot | none
+  location_id: ""               # GHL sub-account (location) id
+  import:
+    stale_days: 60              # only reactivate contacts with no CRM activity for N days
+    include_tags: []            # optional: only contacts with ANY of these tags
+    exclude_tags: [lre-exclude, dnc, do-not-contact, under-contract, closed, active-deal]
+    page_size: 100
+  # Logical field -> CRM field. GHL: custom field ID. HubSpot: internal property name.
+  field_map:
+    first_name: firstName
+    last_name: lastName
+    phone: phone
+    email: email
+    property_address: address1
+    property_city: city
+    property_state: state
+    property_zip: postalCode
+  # Fields the engine WRITES back to the CRM (create these custom fields first; see docs/05-crm-integration.md)
+  writeback_fields:
+    lre_status: ""              # e.g. GHL custom field id, or HubSpot property "lre_status"
+    lre_score: ""
+    lre_temperature: ""
+    lre_timeline: ""
+    lre_motivation: ""
+    lre_condition: ""
+    lre_summary: ""
+  tags:
+    engaged: lre-engaged
+    qualified: lre-qualified
+    hot: lre-hot
+    booked: lre-appointment
+    nurture: lre-nurture
+    dnc: lre-dnc
+    wrong_number: lre-wrong-number
+    handoff: lre-needs-human
+  pipeline:
+    id: ""                      # GHL pipeline id / HubSpot deal pipeline id (leave empty to skip deals)
+    stages:
+      qualified: ""
+      appointment_booked: ""
+  assign_tasks_to: ""           # CRM user id that receives follow-up tasks
+
+# ---------------------------------------------------------------- Calendar
+calendar:
+  enabled: true
+  provider: ghl                 # ghl | calcom
+  calendar_id: ""               # GHL calendar id  (or Cal.com event type id)
+  appointment_type: "quick 10-minute phone call"
+  duration_minutes: 15
+  slots_to_offer: 4             # AI offers 2 of these at a time
+  min_notice_hours: 3
+  booking_window_days: 5
+
+# ---------------------------------------------------------------- AI persona
+persona:
+  agent_name: Sarah
+  company_name: "Client Home Buyers"
+  buyer_description: "a local company that buys houses as-is for cash"
+  market_area: "Dallas–Fort Worth"
+  rep_name: Mike                # human acquisitions rep the lead will speak with
+
+# ---------------------------------------------------------------- Messaging
+messaging:
+  sms_from_numbers: ["+15555550100"]   # also inserted into client_phone_numbers for inbound routing
+  quiet_hours:
+    start_hour: 9               # recipient local time (we check property-state TZ AND client TZ)
+    end_hour: 20
+    allow_sunday: false
+    holidays: ["2026-11-26", "2026-12-25", "2027-01-01"]
+  daily_send_cap: 300           # campaign messages per day (protects number reputation)
+  max_ai_turns_per_lead_per_day: 15
+  reply_debounce_seconds: 25    # wait for the lead to finish typing multi-part texts
+  nudge_after_hours: 24         # re-nudge an engaged lead who stopped replying
+  max_nudges: 2
+  reply_outside_window: false   # keep false unless counsel approves
+
+email:
+  enabled: true
+  from_name: "Sarah at Client Home Buyers"
+  from_address: "sarah@clienthomebuyers.com"
+  reply_domain: "reply.clienthomebuyers.com"   # SendGrid Inbound Parse domain
+  physical_address: "123 Main St, Dallas, TX 75201"   # required by CAN-SPAM
+
+# ---------------------------------------------------------------- Qualification
+qualification:
+  hot_threshold: 70
+  warm_threshold: 40
+  require_decision_maker: true
+  # weights: { timeline: { asap: 35 } }   # optional overrides of n8n/code/lib/scoring.js
+
+# ---------------------------------------------------------------- Handoff
+handoff:
+  slack_webhook_env: SLACK_WEBHOOK_URL_HANDOFF
+  notify_emails: ["acquisitions@clienthomebuyers.com"]
+  notify_on_hot_lead: true

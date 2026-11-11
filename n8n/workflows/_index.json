@@ -1,0 +1,92 @@
+[
+  {
+    "id": "lre01CrmImport00",
+    "name": "LRE 01 · CRM Lead Import",
+    "file": "01_crm_lead_import.json",
+    "nodes": 9
+  },
+  {
+    "id": "lre02CampaignLau",
+    "name": "LRE 02 · Campaign Launcher",
+    "file": "02_campaign_launcher.json",
+    "nodes": 2
+  },
+  {
+    "id": "lre03OutboundSen",
+    "name": "LRE 03 · Outbound Sender",
+    "file": "03_outbound_sender.json",
+    "nodes": 18
+  },
+  {
+    "id": "lre04InboundSms0",
+    "name": "LRE 04 · Inbound SMS",
+    "file": "04_inbound_sms.json",
+    "nodes": 17
+  },
+  {
+    "id": "lre05InboundEmai",
+    "name": "LRE 05 · Inbound Email",
+    "file": "05_inbound_email.json",
+    "nodes": 16
+  },
+  {
+    "id": "lre06AiConversat",
+    "name": "LRE 06 · AI Conversation Engine",
+    "file": "06_ai_conversation_engine.json",
+    "nodes": 23
+  },
+  {
+    "id": "lre07CrmSyncBack",
+    "name": "LRE 07 · CRM Sync-Back",
+    "file": "07_crm_sync_back.json",
+    "nodes": 6
+  },
+  {
+    "id": "lre08Appointment",
+    "name": "LRE 08 · Appointment Booking",
+    "file": "08_appointment_booking.json",
+    "nodes": 14
+  },
+  {
+    "id": "lre09HumanHandof",
+    "name": "LRE 09 · Human Handoff",
+    "file": "09_human_handoff.json",
+    "nodes": 14
+  },
+  {
+    "id": "lre10CadenceRunn",
+    "name": "LRE 10 · Cadence Runner",
+    "file": "10_cadence_runner.json",
+    "nodes": 9
+  },
+  {
+    "id": "lre11ErrorHandle",
+    "name": "LRE 11 · Error Handler",
+    "file": "11_error_handler.json",
+    "nodes": 5
+  },
+  {
+    "id": "lre12HealthRepor",
+    "name": "LRE 12 · Health Report & Heartbeat",
+    "file": "12_health_report_heartbeat.json",
+    "nodes": 9
+  },
+  {
+    "id": "lre13DeliverySta",
+    "name": "LRE 13 · Delivery Status Webhooks",
+    "file": "13_delivery_status_webhooks.json",
+    "nodes": 6
+  },
+  {
+    "id": "lre14CrmAdapter0",
+    "name": "LRE 14 · CRM Adapter",
+    "file": "14_crm_adapter.json",
+    "nodes": 10
+  },
+  {
+    "id": "lre15CalendarAda",
+    "name": "LRE 15 · Calendar Adapter",
+    "file": "15_calendar_adapter.json",
+    "nodes": 10
+  }
+]

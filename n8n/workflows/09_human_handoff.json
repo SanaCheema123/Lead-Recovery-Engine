@@ -1,0 +1,496 @@
+{
+  "id": "lre09HumanHandof",
+  "name": "LRE 09 · Human Handoff",
+  "nodes": [
+    {
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -260,
+        -400
+      ],
+      "parameters": {
+        "content": "## Human Handoff\nSub-workflow. Pauses the AI for the lead (except hot alerts), records a handoff, and alerts the sales team on Slack + email with score, qualification and the recent transcript. Creates a CRM task/note via CRM Sync.\nModes: handoff · forward · booked · hot_alert · hostile · unknown_sender\n\nAlso: signed \"Resume AI\" link endpoint so a rep can hand the lead back to the AI.",
+        "width": 520,
+        "height": 260
+      },
+      "id": "c4f14193-26e8-4083-a2a8-aeaabbf76c74"
+    },
+    {
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "2bf69c14-9386-437b-a1d4-a33069199fb2"
+    },
+    {
+      "name": "Apply Handoff & Load Summary",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        260,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "lrePostgres00001",
+          "name": "LRE Postgres"
+        }
+      },
+      "alwaysOutputData": false,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with l0 as (select * from leads where id = $1::uuid),\nupd as (\n  update leads set\n    ai_paused = case when $2 = 'hot_alert' then ai_paused else true end,\n    status = case when $2 in ('handoff', 'hostile', 'unknown_sender') and status not in ('appointment_booked', 'dnc') then 'handed_off' else status end\n  where id = $1::uuid returning id\n),\nh as (insert into handoffs (lead_id, mode, reason) values ($1::uuid, $2, $3) returning id)\nselect row_to_json(l0.*) as lead,\n  (select row_to_json(q.*) from qualifications q where q.lead_id = l0.id) as qualification,\n  json_build_object('name', c.name, 'settings', c.settings) as client,\n  coalesce((select json_agg(x order by x.created_at) from (select direction, body, created_at from messages where lead_id = l0.id order by created_at desc limit 8) x), '[]') as messages,\n  (select count(*) from handoffs hh where hh.lead_id = l0.id and hh.mode = 'hot_alert' and hh.created_at > now() - interval '24 hours') as prior_hot_alerts_24h,\n  (select id from h) as handoff_id\nfrom l0 join clients c on c.id = l0.client_id",
+        "options": {
+          "queryReplacement": "={{ [ $json.lead_id, $json.handoff_mode || 'handoff', $json.handoff_reason || ($json.decision && $json.decision.handoff_reason) || '' ] }}"
+        }
+      },
+      "id": "85f96077-681e-4b96-a228-a581fbf9260d"
+    },
+    {
+      "name": "Compose Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const crypto = require('crypto');\nconst c = $input.first().json; const start = $('Start').first().json;\nconst mode = start.handoff_mode || 'handoff';\nif (mode === 'hot_alert' && Number(c.prior_hot_alerts_24h) > 0) return [];\nconst lead = c.lead, q = c.qualification || {}, s = c.client.settings || {}, h = s.handoff || {};\nconst reason = start.handoff_reason || (start.decision && start.decision.handoff_reason) || mode;\nconst titles = { handoff: ':raising_hand: Lead needs a human', forward: ':speech_balloon: New reply from a lead you own', booked: ':calendar: Appointment booked',\n  hot_alert: ':fire: HOT seller lead', hostile: ':warning: Hostile / legal-risk reply', unknown_sender: ':grey_question: Reply from unknown number' };\nconst name = [lead.first_name, lead.last_name].filter(Boolean).join(' ') || 'Unknown';\nconst transcript = (c.messages || []).map((m) => (m.direction === 'inbound' ? '> *Lead:* ' : '> _AI:_ ') + m.body).join('\\n');\nconst sig = crypto.createHmac('sha256', $env.LRE_INTERNAL_API_KEY || '').update(lead.id).digest('hex').slice(0, 32);\nconst resume = ($env.APP_BASE_URL || '') + '/webhook/lre/admin/resume-ai?lead_id=' + lead.id + '&sig=' + sig;\nconst text = '*' + (titles[mode] || 'Lead alert') + '* - ' + c.client.name +\n  '\\n*' + name + '*  ' + (lead.phone_e164 || '') + '  ' + (lead.email || '') +\n  '\\n:house: ' + (lead.property_address || '-') +\n  '\\nScore *' + lead.score + '* (' + lead.temperature + ') | Status: ' + lead.status +\n  '\\nReason: ' + reason +\n  '\\nTimeline: ' + (q.timeline || '-') + ' | Motivation: ' + ((q.motivation_reasons || []).join(', ') || '-') + ' | Condition: ' + (q.property_condition || '-') +\n  '\\nSummary: ' + (q.summary || '-') + '\\n\\n' + transcript +\n  (mode === 'hot_alert' ? '' : '\\n\\n<' + resume + '|Hand back to AI>');\nconst em = s.email || {};\nconst emails = (h.notify_emails || []).filter(Boolean);\nconst email_payload = emails.length ? {\n  personalizations: [{ to: emails.map((e) => ({ email: e })) }],\n  from: { email: em.from_address, name: 'Lead Recovery Engine' },\n  subject: (titles[mode] || 'Lead alert').replace(/:[a-z_]+:\\s*/g, '') + ': ' + name,\n  content: [{ type: 'text/plain', value: text.replace(/[*_>]/g, '').replace(/<([^|]+)\\|[^>]+>/g, '$1') }],\n} : null;\nconst crm_event = mode === 'booked' ? 'appointment_booked' : mode === 'unknown_sender' || mode === 'hostile' ? 'handoff' : mode;\nreturn [{ json: { lead_id: lead.id, mode, slack_url: $env[h.slack_webhook_env || 'SLACK_WEBHOOK_URL_HANDOFF'] || '', slack_text: text, email_payload, crm_event } }];\n"
+      },
+      "id": "d57e814e-1e7a-40bd-a18d-cee46cde91a5"
+    },
+    {
+      "name": "Slack Configured?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        780,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c41a118b-e818-4066-a28f-86f50de29fd9",
+              "leftValue": "={{ !!$json.slack_url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7e8f1e20-c81b-4969-a6af-8cf9c8f9ac1b"
+    },
+    {
+      "name": "Post to Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        -200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.slack_url }}",
+        "options": {
+          "timeout": 20000
+        },
+        "authentication": "none",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.slack_text }) }}"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "id": "b91d3a04-01f3-4eb4-a960-89fee4d0d30e"
+    },
+    {
+      "name": "After Slack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{ json: $('Compose Notification').first().json }];\n"
+      },
+      "id": "020af668-0337-4b8b-ae49-74fd32aa9121"
+    },
+    {
+      "name": "Email Configured?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "a922701b-6332-40fb-a9aa-f6128765989d",
+              "leftValue": "={{ !!$json.email_payload }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d290594b-e345-4975-aa88-c18c37744367"
+    },
+    {
+      "name": "Email Team",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1820,
+        -200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.sendgrid.com/v3/mail/send",
+        "options": {
+          "timeout": 20000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.email_payload) }}"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "lreSendgrid00001",
+          "name": "LRE SendGrid"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "id": "1a6c5521-bf8c-48f2-a0ac-866cec134fb1"
+    },
+    {
+      "name": "Prepare CRM Sync",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2080,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const n = $('Compose Notification').first().json; return [{ json: { lead_id: n.lead_id, crm_event: n.crm_event, handed_off: true } }];\n"
+      },
+      "id": "029a5199-e694-44db-afd8-56496776348f"
+    },
+    {
+      "name": "CRM Sync",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        2340,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "lre07CrmSyncBack",
+          "mode": "id"
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "id": "fd931d0b-75fb-4b9f-ac04-59c5a52c5258"
+    },
+    {
+      "name": "Resume AI Link",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        800
+      ],
+      "webhookId": "c566e7a3-42a1-43b8-a04f-ecfbb6aed16e",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "lre/admin/resume-ai",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "9340ee87-8483-4ed9-aa9e-0cad4b4bc5db"
+    },
+    {
+      "name": "Verify Signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        800
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const crypto = require('crypto');\nconst q = $input.first().json.query || {};\nconst expected = crypto.createHmac('sha256', $env.LRE_INTERNAL_API_KEY || '').update(String(q.lead_id || '')).digest('hex').slice(0, 32);\nif (!q.lead_id || q.sig !== expected) throw new Error('Invalid resume-ai signature');\nreturn [{ json: { lead_id: q.lead_id } }];\n"
+      },
+      "id": "f5593392-1ce7-44d2-aec7-230d2b239010"
+    },
+    {
+      "name": "Resume AI For Lead",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        520,
+        800
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "lrePostgres00001",
+          "name": "LRE Postgres"
+        }
+      },
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with h as (update handoffs set resolved_at = now() where lead_id = $1::uuid and resolved_at is null)\nupdate leads set ai_paused = false, status = case when status = 'handed_off' then 'engaged' else status end\nwhere id = $1::uuid and status not in ('dnc', 'wrong_number', 'bad_number') returning id, status",
+        "options": {
+          "queryReplacement": "={{ [ $json.lead_id ] }}"
+        }
+      },
+      "id": "5d70f891-22de-498b-a4fd-c7df94bd640b"
+    },
+    {
+      "name": "Resumed Page",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        780,
+        800
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<html><body style=\"font-family:Arial;padding:40px\"><h2>AI resumed for this lead.</h2><p>The assistant will answer the next message from this lead.</p></body></html>",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html"
+              }
+            ]
+          }
+        }
+      },
+      "id": "38f11a84-accc-4d76-a904-5918220de3c1"
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Apply Handoff & Load Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Handoff & Load Summary": {
+      "main": [
+        [
+          {
+            "node": "Compose Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose Notification": {
+      "main": [
+        [
+          {
+            "node": "Slack Configured?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Configured?": {
+      "main": [
+        [
+          {
+            "node": "Post to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "After Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to Slack": {
+      "main": [
+        [
+          {
+            "node": "After Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "After Slack": {
+      "main": [
+        [
+          {
+            "node": "Email Configured?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Configured?": {
+      "main": [
+        [
+          {
+            "node": "Email Team",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare CRM Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Team": {
+      "main": [
+        [
+          {
+            "node": "Prepare CRM Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare CRM Sync": {
+      "main": [
+        [
+          {
+            "node": "CRM Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume AI Link": {
+      "main": [
+        [
+          {
+            "node": "Verify Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Signature": {
+      "main": [
+        [
+          {
+            "node": "Resume AI For Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume AI For Lead": {
+      "main": [
+        [
+          {
+            "node": "Resumed Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "timezone": "America/New_York",
+    "errorWorkflow": "lre11ErrorHandle"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "generatedBy": "tools/build-workflows.js"
+  }
+}

@@ -1,0 +1,113 @@
+# =============================================================================
+# Lead Recovery Engine — production stack (single VPS, ~4 GB RAM is plenty)
+#
+#   caddy      : automatic HTTPS (Let's Encrypt) in front of n8n webhooks + editor
+#   n8n        : main instance (editor, webhooks, schedules)
+#   n8n-worker : queue-mode worker(s) — scale with `docker compose up -d --scale n8n-worker=3`
+#   redis      : n8n execution queue
+#   postgres   : n8n internal DB ("n8n") + Lead Recovery Engine DB ("lre")
+#
+# Start:  cp .env.example .env && edit && docker compose up -d
+# =============================================================================
+
+x-n8n-env: &n8n-env
+  DB_TYPE: postgresdb
+  DB_POSTGRESDB_HOST: postgres
+  DB_POSTGRESDB_PORT: 5432
+  DB_POSTGRESDB_DATABASE: n8n
+  DB_POSTGRESDB_USER: ${POSTGRES_USER}
+  DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+  EXECUTIONS_MODE: queue
+  QUEUE_BULL_REDIS_HOST: redis
+  QUEUE_HEALTH_CHECK_ACTIVE: "true"
+  N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+  N8N_HOST: ${N8N_HOST}
+  N8N_PROTOCOL: https
+  N8N_PORT: 5678
+  WEBHOOK_URL: ${APP_BASE_URL}/
+  N8N_EDITOR_BASE_URL: ${APP_BASE_URL}/
+  GENERIC_TIMEZONE: ${TZ:-America/New_York}
+  TZ: ${TZ:-America/New_York}
+  N8N_RUNNERS_ENABLED: "true"
+  N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"        # Code nodes read config from $env
+  NODE_FUNCTION_ALLOW_BUILTIN: crypto           # signature verification
+  N8N_DIAGNOSTICS_ENABLED: "false"
+  N8N_PERSONALIZATION_ENABLED: "false"
+  EXECUTIONS_DATA_PRUNE: "true"
+  EXECUTIONS_DATA_MAX_AGE: 336                  # keep 14 days of executions (messages are in our own DB)
+  OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS: "true"
+  # ---- values read by workflows via $env ----
+  APP_BASE_URL: ${APP_BASE_URL}
+  OPENAI_MODEL: ${OPENAI_MODEL}
+  TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
+  TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
+  TWILIO_MESSAGING_SERVICE_SID: ${TWILIO_MESSAGING_SERVICE_SID}
+  TWILIO_VALIDATE_SIGNATURE: ${TWILIO_VALIDATE_SIGNATURE:-true}
+  LRE_INTERNAL_API_KEY: ${LRE_INTERNAL_API_KEY}
+  LRE_INBOUND_EMAIL_KEY: ${LRE_INBOUND_EMAIL_KEY}
+  SLACK_WEBHOOK_URL_ALERTS: ${SLACK_WEBHOOK_URL_ALERTS}
+  SLACK_WEBHOOK_URL_HANDOFF: ${SLACK_WEBHOOK_URL_HANDOFF}
+  HEALTHCHECK_URL: ${HEALTHCHECK_URL}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: lre
+    ports:
+      - "127.0.0.1:5432:5432"   # localhost only — for npm scripts on the host / SSH tunnel
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+      - ./database/migrations:/migrations:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d lre"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes: [redis_data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-latest}
+    restart: unless-stopped
+    environment: *n8n-env
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n:/lre/n8n:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  n8n-worker:
+    image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-latest}
+    restart: unless-stopped
+    command: worker --concurrency=10
+    environment: *n8n-env
+    depends_on: [n8n]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      N8N_HOST: ${N8N_HOST}
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on: [n8n]
+
+volumes:
+  pg_data:
+  redis_data:
+  n8n_data:
+  caddy_data:

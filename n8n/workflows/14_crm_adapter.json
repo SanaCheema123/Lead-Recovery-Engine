@@ -1,0 +1,360 @@
+{
+  "id": "lre14CrmAdapter0",
+  "name": "LRE 14 · CRM Adapter",
+  "nodes": [
+    {
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -260,
+        -400
+      ],
+      "parameters": {
+        "content": "## CRM Adapter\nSub-workflow. Translates one generic CRM operation into a GoHighLevel (API v2) or HubSpot (CRM v3) API call. Add a new CRM by adding a branch here — nothing else changes.\n\nOps: update_fields · add_tags · set_dnd · add_note · create_task · upsert_opportunity\nInput: `{crm_type, crm_contact_id, location_id, op, payload, lead_id}`",
+        "width": 520,
+        "height": 260
+      },
+      "id": "3ae5b996-7526-45c5-a7a4-449c2f603de1"
+    },
+    {
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "b1773694-c134-40a2-a2be-4a418b929a23"
+    },
+    {
+      "name": "By CRM",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        260,
+        0
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.crm_type }}",
+                    "rightValue": "ghl",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ghl"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.crm_type }}",
+                    "rightValue": "hubspot",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "hubspot"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "3370dc46-9156-4991-a429-5531e420f149"
+    },
+    {
+      "name": "Build GHL Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        -200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const j = $input.first().json; const base = 'https://services.leadconnectorhq.com';\nconst id = j.crm_contact_id; const p = j.payload || {}; let r;\nswitch (j.op) {\n  case 'update_fields': r = { method: 'PUT', url: base + '/contacts/' + id, body: { customFields: Object.entries(p.fields).map(([k, v]) => ({ id: k, field_value: v })) } }; break;\n  case 'add_tags': r = { method: 'POST', url: base + '/contacts/' + id + '/tags', body: { tags: p.tags } }; break;\n  case 'set_dnd': r = { method: 'PUT', url: base + '/contacts/' + id, body: { dnd: true } }; break;\n  case 'add_note': r = { method: 'POST', url: base + '/contacts/' + id + '/notes', body: { body: p.body } }; break;\n  case 'create_task': r = { method: 'POST', url: base + '/contacts/' + id + '/tasks', body: Object.assign({ title: p.title, body: p.body, dueDate: p.due_at, completed: false }, p.assigned_to ? { assignedTo: p.assigned_to } : {}) }; break;\n  case 'upsert_opportunity': r = { method: 'POST', url: base + '/opportunities/upsert', body: { locationId: j.location_id, contactId: id, pipelineId: p.pipeline_id, pipelineStageId: p.stage_id, name: p.name, status: p.status } }; break;\n  default: throw new Error('Unsupported GHL op: ' + j.op);\n}\nreturn [{ json: { ...j, request: r } }];\n"
+      },
+      "id": "177242ff-43e6-41d0-adba-2be3f9205771"
+    },
+    {
+      "name": "Build HubSpot Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const j = $input.first().json; const base = 'https://api.hubapi.com';\nconst id = j.crm_contact_id; const p = j.payload || {};\nconst assoc = (typeId) => [{ to: { id }, types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: typeId }] }];\nlet r;\nswitch (j.op) {\n  case 'update_fields': r = { method: 'PATCH', url: base + '/crm/v3/objects/contacts/' + id, body: { properties: p.fields } }; break;\n  // HubSpot has no tags: we store them in a multi-checkbox contact property \"lre_tags\".\n  case 'add_tags': r = { method: 'PATCH', url: base + '/crm/v3/objects/contacts/' + id, body: { properties: { lre_tags: p.tags.join(';') } } }; break;\n  case 'set_dnd': r = { method: 'PATCH', url: base + '/crm/v3/objects/contacts/' + id, body: { properties: { lre_do_not_contact: 'true' } } }; break;\n  case 'add_note': r = { method: 'POST', url: base + '/crm/v3/objects/notes', body: { properties: { hs_timestamp: new Date().toISOString(), hs_note_body: p.body.replace(/\\n/g, '<br>') }, associations: assoc(202) } }; break;\n  case 'create_task': r = { method: 'POST', url: base + '/crm/v3/objects/tasks', body: { properties: Object.assign({ hs_timestamp: p.due_at, hs_task_subject: p.title, hs_task_body: p.body, hs_task_status: 'NOT_STARTED', hs_task_priority: 'HIGH' }, p.assigned_to ? { hubspot_owner_id: p.assigned_to } : {}), associations: assoc(204) } }; break;\n  case 'upsert_opportunity': r = { method: 'POST', url: base + '/crm/v3/objects/deals', body: { properties: { dealname: p.name, pipeline: p.pipeline_id, dealstage: p.stage_id }, associations: assoc(3) } }; break;\n  default: throw new Error('Unsupported HubSpot op: ' + j.op);\n}\nreturn [{ json: { ...j, request: r } }];\n"
+      },
+      "id": "82f20cde-91e4-46e2-a293-fb6b9c7ab17e"
+    },
+    {
+      "name": "GHL API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        -200
+      ],
+      "parameters": {
+        "method": "={{ $json.request.method }}",
+        "url": "={{ $json.request.url }}",
+        "options": {
+          "timeout": 20000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Version",
+              "value": "2021-07-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request.body) }}"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "lreGhl0000000001",
+          "name": "LRE GoHighLevel"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "id": "958b7c9e-aab6-4bdd-a7e5-0f16bbfb16aa"
+    },
+    {
+      "name": "HubSpot API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        200
+      ],
+      "parameters": {
+        "method": "={{ $json.request.method }}",
+        "url": "={{ $json.request.url }}",
+        "options": {
+          "timeout": 20000
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request.body) }}"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "lreHubspot000001",
+          "name": "LRE HubSpot"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "id": "cf2321c5-7045-454f-a02c-53f028cdb15c"
+    },
+    {
+      "name": "GHL OK",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        -300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const j = $('Build GHL Request').first().json; return [{ json: { ...j, http_status: 200, error: '' } }];\n"
+      },
+      "id": "c7ff82ac-57b9-45d5-a6b4-5c4ed7b28f07"
+    },
+    {
+      "name": "GHL Failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        -100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const j = $('Build GHL Request').first().json; return [{ json: { ...j, http_status: 0, error: JSON.stringify($input.first().json.error || $input.first().json).slice(0, 1000) } }];\n"
+      },
+      "id": "00440fa6-fc12-4e2e-a2d7-59fbc89867d7"
+    },
+    {
+      "name": "HubSpot OK",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const j = $('Build HubSpot Request').first().json; return [{ json: { ...j, http_status: 200, error: '' } }];\n"
+      },
+      "id": "9ba4c2e4-faad-472a-a663-8c2ac7e178c4"
+    },
+    {
+      "name": "HubSpot Failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const j = $('Build HubSpot Request').first().json; return [{ json: { ...j, http_status: 0, error: JSON.stringify($input.first().json.error || $input.first().json).slice(0, 1000) } }];\n"
+      },
+      "id": "05ae35d9-36ad-41ff-abe3-6739e3390662"
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "By CRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "By CRM": {
+      "main": [
+        [
+          {
+            "node": "Build GHL Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build HubSpot Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build GHL Request": {
+      "main": [
+        [
+          {
+            "node": "GHL API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build HubSpot Request": {
+      "main": [
+        [
+          {
+            "node": "HubSpot API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GHL API": {
+      "main": [
+        [
+          {
+            "node": "GHL OK",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GHL Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot API": {
+      "main": [
+        [
+          {
+            "node": "HubSpot OK",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HubSpot Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "timezone": "America/New_York",
+    "errorWorkflow": "lre11ErrorHandle"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "generatedBy": "tools/build-workflows.js"
+  }
+}

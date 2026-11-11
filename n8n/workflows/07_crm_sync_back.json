@@ -1,0 +1,229 @@
+{
+  "id": "lre07CrmSyncBack",
+  "name": "LRE 07 · CRM Sync-Back",
+  "nodes": [
+    {
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -260,
+        -400
+      ],
+      "parameters": {
+        "content": "## CRM Sync-Back\nSub-workflow. Plans CRM writes from the lead's current state (fields, tags, DND, notes with transcript, follow-up tasks, pipeline stage) and executes them through the CRM Adapter (14). Every call is logged to `crm_sync_log`.\n\nInput: `{lead_id, crm_event?}` — events: ai_turn, qualified, hot_alert, handoff, appointment_booked, opted_out, opt_in, forward",
+        "width": 520,
+        "height": 260
+      },
+      "id": "fc433710-969b-4096-a260-b6035a107798"
+    },
+    {
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "dbe3f1f3-99cd-486e-acab-0b9a137468ed"
+    },
+    {
+      "name": "Has Lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "be3cd1cf-2f7d-4123-ab82-29f8f022890c",
+              "leftValue": "={{ !!$json.lead_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ba528502-a2fd-4064-ae02-893cdb22d8a8"
+    },
+    {
+      "name": "Load Lead For CRM",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        520,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "lrePostgres00001",
+          "name": "LRE Postgres"
+        }
+      },
+      "alwaysOutputData": false,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select row_to_json(l.*) as lead,\n  json_build_object('crm_type', c.crm_type, 'settings', c.settings) as client,\n  (select row_to_json(q.*) from qualifications q where q.lead_id = l.id) as qualification,\n  coalesce((select json_agg(x order by x.created_at) from (select direction, body, created_at from messages where lead_id = l.id order by created_at desc limit 12) x), '[]') as messages,\n  coalesce((select json_agg(distinct s.request->'payload'->>'stage_id') from crm_sync_log s where s.lead_id = l.id and s.op = 'upsert_opportunity' and s.error is null), '[]') as synced_stages,\n  (select starts_at from appointments a where a.lead_id = l.id and a.status = 'booked' order by starts_at desc limit 1) as appointment_at\nfrom leads l join clients c on c.id = l.client_id where l.id = $1::uuid",
+        "options": {
+          "queryReplacement": "={{ [ $json.lead_id ] }}"
+        }
+      },
+      "id": "40ddc040-d5ff-4952-aace-5f22384c6ef6"
+    },
+    {
+      "name": "Plan CRM Operations",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const c = $input.first().json; const start = $('Start').first().json;\nconst lead = c.lead, client = c.client, s = client.settings || {}, crm = s.crm || {}, q = c.qualification || {};\nif (client.crm_type === 'none' || !lead.crm_contact_id) return [];\nconst event = start.crm_event || 'ai_turn';\nconst wf = crm.writeback_fields || {}, tags = crm.tags || {};\nconst fields = {};\nconst put = (k, v) => { if (wf[k] && v !== undefined && v !== null && v !== '') fields[wf[k]] = v; };\nput('lre_status', lead.status); put('lre_score', lead.score); put('lre_temperature', lead.temperature);\nput('lre_timeline', q.timeline); put('lre_condition', q.property_condition); put('lre_summary', q.summary);\nput('lre_motivation', [q.motivation_level, ...(q.motivation_reasons || [])].filter(Boolean).join(', '));\nconst ops = [];\nif (Object.keys(fields).length) ops.push({ op: 'update_fields', payload: { fields } });\nconst st = lead.status, t = [];\nif (['engaged', 'qualifying'].includes(st)) t.push(tags.engaged);\nif (st === 'qualified') t.push(tags.qualified);\nif (lead.temperature === 'hot') t.push(tags.hot);\nif (st === 'appointment_booked') t.push(tags.booked);\nif (st === 'nurture') t.push(tags.nurture);\nif (st === 'dnc') t.push(tags.dnc);\nif (st === 'wrong_number') t.push(tags.wrong_number);\nif (st === 'handed_off') t.push(tags.handoff);\nif (t.filter(Boolean).length) ops.push({ op: 'add_tags', payload: { tags: t.filter(Boolean) } });\nif (st === 'dnc') ops.push({ op: 'set_dnd', payload: {} });\nconst noteEvents = ['qualified', 'hot_alert', 'handoff', 'appointment_booked', 'opted_out', 'forward'];\nif (noteEvents.includes(event)) {\n  const transcript = (c.messages || []).map((m) => (m.direction === 'inbound' ? 'Lead: ' : 'AI: ') + m.body).join('\\n');\n  ops.push({ op: 'add_note', payload: { body: ('[Lead Recovery Engine] ' + event.toUpperCase().replace('_', ' ') +\n    '\\nStatus: ' + st + ' | Score: ' + lead.score + ' (' + lead.temperature + ')' +\n    (c.appointment_at ? '\\nAppointment: ' + c.appointment_at : '') +\n    '\\nSummary: ' + (q.summary || '-') +\n    '\\nTimeline: ' + (q.timeline || '-') + ' | Motivation: ' + ((q.motivation_reasons || []).join(', ') || '-') +\n    ' | Condition: ' + (q.property_condition || '-') + ' | Occupancy: ' + (q.occupancy || '-') +\n    ' | Price: ' + (q.price_flexibility || '-') + (q.asking_price ? ' ($' + q.asking_price + ')' : '') +\n    '\\n\\nRecent conversation:\\n' + transcript).slice(0, 4900) } });\n}\nif (['handoff', 'hot_alert', 'appointment_booked'].includes(event)) {\n  const name = [lead.first_name, lead.last_name].filter(Boolean).join(' ') || lead.phone_e164;\n  const title = event === 'appointment_booked' ? 'Seller call booked: ' + name : event === 'hot_alert' ? 'HOT seller lead: call ' + name : 'Follow up with ' + name + ' (AI handoff)';\n  ops.push({ op: 'create_task', payload: { title, body: (q.summary || '') + ' ' + (lead.property_address || ''),\n    due_at: event === 'appointment_booked' && c.appointment_at ? c.appointment_at : new Date(Date.now() + 30 * 60000).toISOString(),\n    assigned_to: crm.assign_tasks_to || null } });\n}\nconst pipe = crm.pipeline || {}; const stageId = (pipe.stages || {})[st];\nif (pipe.id && stageId && !(c.synced_stages || []).includes(stageId)) {\n  ops.push({ op: 'upsert_opportunity', payload: { pipeline_id: pipe.id, stage_id: stageId, status: 'open',\n    name: ([lead.first_name, lead.last_name].filter(Boolean).join(' ') || 'Seller') + ' - ' + (lead.property_address || 'Property') } });\n}\nreturn ops.map((o) => ({ json: { ...o, lead_id: lead.id, crm_type: client.crm_type, crm_contact_id: lead.crm_contact_id, location_id: crm.location_id } }));\n"
+      },
+      "id": "9cbe257a-912a-46ed-a1ee-2f6bef064764"
+    },
+    {
+      "name": "CRM Adapter",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        1040,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "lre14CrmAdapter0",
+          "mode": "id"
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "97aa253d-218e-47b6-a3f4-217bcb196a3b"
+    },
+    {
+      "name": "Log CRM Sync",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1300,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "lrePostgres00001",
+          "name": "LRE Postgres"
+        }
+      },
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into crm_sync_log (lead_id, op, request, http_status, error) values ($1::uuid, $2, $3::jsonb, nullif($4, '')::int, nullif($5, ''))\nreturning id",
+        "options": {
+          "queryReplacement": "={{ [ $json.lead_id, $json.op, JSON.stringify({ payload: $json.payload, request: $json.request }), String($json.http_status || ''), $json.error || '' ] }}"
+        }
+      },
+      "id": "e6fdc926-c19f-447e-a9b0-d758b812bae2"
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Has Lead?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Lead?": {
+      "main": [
+        [
+          {
+            "node": "Load Lead For CRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Lead For CRM": {
+      "main": [
+        [
+          {
+            "node": "Plan CRM Operations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plan CRM Operations": {
+      "main": [
+        [
+          {
+            "node": "CRM Adapter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM Adapter": {
+      "main": [
+        [
+          {
+            "node": "Log CRM Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "timezone": "America/New_York",
+    "errorWorkflow": "lre11ErrorHandle"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "generatedBy": "tools/build-workflows.js"
+  }
+}

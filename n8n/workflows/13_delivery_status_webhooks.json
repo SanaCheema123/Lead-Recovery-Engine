@@ -1,0 +1,198 @@
+{
+  "id": "lre13DeliverySta",
+  "name": "LRE 13 · Delivery Status Webhooks",
+  "nodes": [
+    {
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -260,
+        -400
+      ],
+      "parameters": {
+        "content": "## Delivery Status Webhooks\nTwilio status callbacks + SendGrid Event Webhook. Updates message delivery status; marks invalid/landline numbers `bad_number`, carrier-level STOPs `dnc`; email bounces, spam reports and unsubscribes become suppressions.\n\nTwilio StatusCallback: `{APP_BASE_URL}/webhook/lre/sms/status` (set automatically per message)\nSendGrid Event Webhook: `{APP_BASE_URL}/webhook/lre/email/events?key={LRE_INBOUND_EMAIL_KEY}`",
+        "width": 520,
+        "height": 260
+      },
+      "id": "56f4317a-375b-4429-a6a0-9b1bf3b6c7f8"
+    },
+    {
+      "name": "Twilio Status Callback",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "d443a923-7b45-4fe0-ac5f-5d2c7a0bbbc4",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lre/sms/status",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "cf05839a-2886-4370-a87b-d36cd1a38faa"
+    },
+    {
+      "name": "Parse Twilio Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const crypto = require('crypto');\nconst req = $input.first().json; const p = req.body || {};\nif ($env.TWILIO_VALIDATE_SIGNATURE !== 'false') {\n  const url = ($env.APP_BASE_URL || '') + '/webhook/lre/sms/status';\n  const data = url + Object.keys(p).sort().map((k) => k + p[k]).join('');\n  const expected = crypto.createHmac('sha1', $env.TWILIO_AUTH_TOKEN || '').update(Buffer.from(data, 'utf-8')).digest('base64');\n  if ((req.headers || {})['x-twilio-signature'] !== expected) throw new Error('Invalid Twilio signature on status callback');\n}\nreturn [{ json: { sid: p.MessageSid || p.SmsSid, status: p.MessageStatus || p.SmsStatus, error_code: p.ErrorCode ? String(p.ErrorCode) : '' } }];\n"
+      },
+      "id": "5ea00355-411f-47ac-a15a-68a44b1054af"
+    },
+    {
+      "name": "Update SMS Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        520,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "lrePostgres00001",
+          "name": "LRE Postgres"
+        }
+      },
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with m as (update messages set status = $2, error_code = nullif($3, '') where provider_message_id = $1 returning lead_id, client_id, to_address),\no as (\n  insert into opt_outs (client_id, channel, value, source)\n  select client_id, 'sms', to_address, 'carrier' from m where $3 = '21610' on conflict do nothing\n)\nupdate leads set\n  status = case when $3 in ('21211', '21614', '30005', '30006') then 'bad_number' when $3 = '21610' then 'dnc' else status end,\n  opted_out = case when $3 = '21610' then true else opted_out end\nwhere id = (select lead_id from m) and $3 <> ''\nreturning id",
+        "options": {
+          "queryReplacement": "={{ [ $json.sid, $json.status, $json.error_code ] }}"
+        }
+      },
+      "id": "677b26eb-5abc-46bd-a0b5-8c285e3e37dd"
+    },
+    {
+      "name": "SendGrid Event Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        600
+      ],
+      "webhookId": "9e54b7f1-0537-449e-af1b-61b0801ed550",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lre/email/events",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "aae196e7-9a8d-433f-a31f-495ced9b80c8"
+    },
+    {
+      "name": "Explode Email Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        600
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const req = $input.first().json;\nif (!$env.LRE_INBOUND_EMAIL_KEY || (req.query || {}).key !== $env.LRE_INBOUND_EMAIL_KEY) throw new Error('Email events: bad key');\nconst events = Array.isArray(req.body) ? req.body : [];\nconst keep = ['delivered', 'bounce', 'dropped', 'spamreport', 'unsubscribe', 'group_unsubscribe'];\nreturn events.filter((e) => keep.includes(e.event)).map((e) => ({ json: {\n  provider_message_id: 'email:' + String(e.sg_message_id || '').split('.')[0], event: e.event,\n  email: String(e.email || '').toLowerCase(), lead_id: e.lre_lead_id || '' } }));\n"
+      },
+      "id": "1702fae1-2969-464a-a8ae-eba9bd3c13d6"
+    },
+    {
+      "name": "Apply Email Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        520,
+        600
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "lrePostgres00001",
+          "name": "LRE Postgres"
+        }
+      },
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with m as (\n  update messages set status = case when $2 = 'delivered' then 'delivered' when $2 in ('bounce', 'dropped') then 'failed' else status end\n  where provider_message_id = $1 returning lead_id, client_id\n), l as (select id, client_id from leads where id = coalesce((select lead_id from m), nullif($4, '')::uuid)),\no as (\n  insert into opt_outs (client_id, channel, value, source)\n  select client_id, 'email', $3, case when $2 = 'spamreport' then 'spam_report' when $2 in ('bounce', 'dropped') then 'bounce' else 'email_unsubscribe' end\n  from l where $2 in ('bounce', 'dropped', 'spamreport', 'unsubscribe', 'group_unsubscribe') on conflict do nothing\n)\nupdate leads set opted_out = true, status = 'dnc'\nwhere id = (select id from l) and $2 in ('spamreport', 'unsubscribe', 'group_unsubscribe')\nreturning id",
+        "options": {
+          "queryReplacement": "={{ [ $json.provider_message_id, $json.event, $json.email, $json.lead_id ] }}"
+        }
+      },
+      "id": "b1ab2f12-215f-4b02-ac0d-6744e7886dd5"
+    }
+  ],
+  "connections": {
+    "Twilio Status Callback": {
+      "main": [
+        [
+          {
+            "node": "Parse Twilio Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Twilio Status": {
+      "main": [
+        [
+          {
+            "node": "Update SMS Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SendGrid Event Webhook": {
+      "main": [
+        [
+          {
+            "node": "Explode Email Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Explode Email Events": {
+      "main": [
+        [
+          {
+            "node": "Apply Email Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "timezone": "America/New_York",
+    "errorWorkflow": "lre11ErrorHandle"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "generatedBy": "tools/build-workflows.js"
+  }
+}

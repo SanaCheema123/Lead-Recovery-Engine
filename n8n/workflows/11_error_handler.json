@@ -1,0 +1,192 @@
+{
+  "id": "lre11ErrorHandle",
+  "name": "LRE 11 · Error Handler",
+  "nodes": [
+    {
+      "name": "Note 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -260,
+        -400
+      ],
+      "parameters": {
+        "content": "## Error Handler\nSet as the Error Workflow of every LRE workflow (done automatically by the build). Logs every failure to `workflow_errors` and alerts Slack — de-duplicated by error signature so a recurring failure alerts once per 15 minutes, not 500 times.",
+        "width": 520,
+        "height": 260
+      },
+      "id": "08b70808-9273-43ed-aade-d9781980940a"
+    },
+    {
+      "name": "On Workflow Error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {},
+      "id": "1f63fbbe-bca5-4562-a658-aa6ed7502f51"
+    },
+    {
+      "name": "Format Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const e = $input.first().json; const wf = e.workflow || {}; const ex = e.execution || {}; const err = ex.error || {};\nconst message = String(err.message || 'unknown error').slice(0, 2000);\nconst signature = (wf.name || '') + '|' + (ex.lastNodeExecuted || '') + '|' + message.replace(/[0-9a-f-]{8,}/gi, '#').replace(/\\d+/g, '#').slice(0, 160);\nreturn [{ json: { workflow_name: wf.name || '', node_name: ex.lastNodeExecuted || '', execution_id: String(ex.id || ''), message, signature, url: ex.url || '', payload: { error: err, mode: ex.mode } } }];\n"
+      },
+      "id": "142367e4-2086-485b-a07e-0087a24034ef"
+    },
+    {
+      "name": "Log Error",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        520,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "lrePostgres00001",
+          "name": "LRE Postgres"
+        }
+      },
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with prior as (select count(*) as n from workflow_errors where signature = $5 and created_at > now() - interval '15 minutes'),\nins as (insert into workflow_errors (workflow_name, node_name, execution_id, message, signature, payload) values ($1, $2, $3, $4, $5, $6::jsonb) returning id)\nselect (select n from prior) as prior_count",
+        "options": {
+          "queryReplacement": "={{ [ $json.workflow_name, $json.node_name, $json.execution_id, $json.message, $json.signature, JSON.stringify($json.payload) ] }}"
+        }
+      },
+      "id": "b51b10ef-324b-4cf3-a30d-98bdf2646d8a"
+    },
+    {
+      "name": "First In 15 Min?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        780,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "60377c95-d15b-47df-a21f-1cad824413b4",
+              "leftValue": "={{ Number($json.prior_count) === 0 && !!$env.SLACK_WEBHOOK_URL_ALERTS }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e65f02b2-9fc3-4cf4-aa0c-05e3801451b7"
+    },
+    {
+      "name": "Alert Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL_ALERTS }}",
+        "options": {
+          "timeout": 20000
+        },
+        "authentication": "none",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: ':rotating_light: *LRE workflow error*\\n*' + $('Format Error').item.json.workflow_name + '* → node `' + $('Format Error').item.json.node_name + '`\\n' + $('Format Error').item.json.message.slice(0, 500) + '\\n' + $('Format Error').item.json.url }) }}"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "id": "cfc4e077-2ce9-47db-aca6-6fe4f0fca361"
+    }
+  ],
+  "connections": {
+    "On Workflow Error": {
+      "main": [
+        [
+          {
+            "node": "Format Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Error": {
+      "main": [
+        [
+          {
+            "node": "Log Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Error": {
+      "main": [
+        [
+          {
+            "node": "First In 15 Min?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "First In 15 Min?": {
+      "main": [
+        [
+          {
+            "node": "Alert Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "timezone": "America/New_York"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "generatedBy": "tools/build-workflows.js"
+  }
+}

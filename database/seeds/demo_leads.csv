@@ -1,0 +1,7 @@
+crm_contact_id,first_name,last_name,phone,email,property_address,property_city,property_state,property_zip,last_activity
+demo-001,John,Carter,(214) 555-0101,john.carter@example.com,"4512 Oak Lawn Ave, Dallas, TX 75219",Dallas,TX,75219,2025-03-14
+demo-002,Maria,Lopez,(817) 555-0102,maria.lopez@example.com,"918 Hemphill St, Fort Worth, TX 76104",Fort Worth,TX,76104,2025-01-22
+demo-003,Derrick,Hughes,(972) 555-0103,,"2207 Belt Line Rd, Garland, TX 75044",Garland,TX,75044,2024-11-05
+demo-004,Patricia,Nguyen,(469) 555-0104,pnguyen@example.com,"77 Lakeview Dr, Rockwall, TX 75087",Rockwall,TX,75087,2025-06-30
+demo-005,Robert,King,(214) 555-0105,rking@example.com,"3301 Gaston Ave, Dallas, TX 75246",Dallas,TX,75246,2024-09-18
+demo-006,Angela,Brooks,(682) 555-0106,,"1440 E Abram St, Arlington, TX 76010",Arlington,TX,76010,2025-02-11

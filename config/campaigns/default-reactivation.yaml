@@ -1,0 +1,89 @@
+# =============================================================================
+# Default 60-day reactivation cadence for dormant seller leads.
+# Assign to a client:   client_slug: <slug>   then  npm run sync:config
+#
+# Template syntax:  {{var|fallback}}  and spintax {a|b|c} (deterministic per lead).
+# Available vars:   first_name, last_name, property_address, property_street,
+#                   property_city, property_state, agent_name, company_name,
+#                   rep_name, market_area
+#
+# Once a lead replies, the cadence pauses automatically and the AI takes over.
+# The first SMS gets "Reply STOP to opt out" appended automatically.
+# =============================================================================
+
+slug: default-reactivation
+name: "Dormant Seller Reactivation (60 days)"
+client_slug: demo-investor
+status: paused                 # set to active when ready to send
+
+settings:
+  stale_days: 45               # overrides client crm.import.stale_days if set
+  daily_new_limit: 75          # new leads enrolled per day (ramp slowly on new numbers)
+  enroll_statuses: [new]
+  priority: recent_first       # recent_first | oldest_first
+
+steps:
+  - key: opener
+    day: 0
+    channel: sms
+    fallback_channel: email
+    sms: "{Hi|Hey} {{first_name|there}}, it's {{agent_name}} with {{company_name}}. {You'd reached out to us a while back|We connected a while ago} about {{property_street|your property}}. Are you still open to selling it?"
+    email_subject: "Still thinking about {{property_street|your property}}?"
+    email_body: |
+      Hi {{first_name|there}},
+
+      It's {{agent_name}} with {{company_name}}. We spoke a while back about {{property_street|your property}} and I wanted to check in — are you still open to selling it?
+
+      Just hit reply either way.
+
+  - key: as_is_offer
+    day: 2
+    channel: sms
+    fallback_channel: email
+    sms: "{{first_name|Hi}}, {just following up|quick follow up} — would you consider a no-repairs, no-fees cash offer on {{property_street|the property}} if the number made sense?"
+    email_subject: "A simple option for {{property_street|your property}}"
+    email_body: |
+      Hi {{first_name|there}},
+
+      Following up on my note. If selling {{property_street|the property}} as-is (no repairs, no agent fees, you pick the closing date) sounds useful, I'm happy to put a number together.
+
+      Would that be worth a quick conversation?
+
+  - key: email_value
+    day: 5
+    channel: email
+    fallback_channel: sms
+    sms: "{{first_name|Hi}}, no pressure at all — is selling {{property_street|the property}} something you'd consider this year?"
+    email_subject: "{{first_name|Quick question}} — timing on {{property_street|the house}}"
+    email_body: |
+      Hi {{first_name|there}},
+
+      Some owners we talk to want to sell quickly; others just want to know their options for later this year. Either is completely fine.
+
+      Is selling {{property_street|the property}} something you'd consider in the next few months?
+
+  - key: wrong_number_check
+    day: 9
+    channel: sms
+    sms: "{Hi|Hey}, is this still the best number for the owner of {{property_street|the property}}? Didn't want to keep bugging the wrong person."
+
+  - key: timing
+    day: 16
+    channel: sms
+    sms: "{{first_name|Hi}}, totally understand if the timing isn't right. Want me to check back in a few months instead?"
+
+  - key: market_update
+    day: 30
+    channel: sms
+    fallback_channel: email
+    sms: "{Hi|Hey} {{first_name|there}}, {{agent_name}} again — we're buying in {{property_city|your area}} again this month. Do you still own {{property_street|the property}}?"
+    email_subject: "Buying again in {{property_city|your area}}"
+    email_body: |
+      Hi {{first_name|there}},
+
+      We're actively buying in {{property_city|your area}} again this month. If you still own {{property_street|the property}} and would like a no-obligation offer, just reply here.
+
+  - key: breakup
+    day: 60
+    channel: sms
+    sms: "{{first_name|Hi}}, I haven't heard back so I'll close out my notes on {{property_street|the property}}. If anything changes, just text me here anytime."

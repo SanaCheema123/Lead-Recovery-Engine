@@ -1,0 +1,26 @@
+{
+  "name": "lead-recovery-engine",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI-powered dormant seller-lead reactivation for real estate investors: CRM import, SMS/email cadences, AI qualification conversations, appointment booking, CRM sync-back and human handoff, on n8n + Postgres + OpenAI + Twilio.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test tests/unit/*.test.js",
+    "test:sql": "node tools/test-sql.js",
+    "test:scenarios": "node tools/run-scenarios.js",
+    "build:workflows": "node tools/build-workflows.js",
+    "sync:config": "node scripts/sync-config.js",
+    "import:csv": "node scripts/import-leads-csv.js",
+    "deploy:workflows": "bash scripts/deploy-workflows.sh",
+    "simulate:sms": "bash scripts/simulate-inbound-sms.sh",
+    "verify": "npm test && npm run build:workflows && npm run test:sql && npm run test:integration",
+    "test:integration": "node --test tests/integration/*.test.js"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "pg": "^8.13.0"
+  }
+}
