@@ -1,5 +1,6 @@
 # Lead Recovery Engine
 
+
 **AI-powered reactivation of dormant seller leads for US real estate investors, wholesalers and flippers.**
 
 Lead Recovery Engine (LRE) pulls old and inactive property-owner leads from the client's CRM, re-opens the conversation by SMS and email, holds a natural two-way AI conversation that identifies seller intent and motivation, scores and qualifies the lead, books qualified sellers onto the sales team's calendar, writes everything back to the CRM, and hands off to a human when needed. Compliance controls are built into the core.
